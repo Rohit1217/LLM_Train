@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor / local
+.vscode/
+.claude/
+.ipynb_checkpoints/
+
+# Large data / binaries
+*.bin
+resreve.bin
+
+# Profiling / debug artifacts
+*.nsys-rep
+*.log
+torch_compile_debug.log
+trition_kernels*.py
+triton_kernels*.py
+
+# wandb
+wandb/
