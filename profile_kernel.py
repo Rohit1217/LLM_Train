@@ -57,7 +57,6 @@ optimized_train_step = torch.compile(train_step, mode="max-autotune-no-cudagraph
 import torch
 import time
 
-# ---- config ----
 DEVICE = "cuda:6"
 A6000_BF16_PEAK = 154e12   
 WARMUP = 5                 
@@ -70,7 +69,6 @@ tokens_per_step = B * T
 
 
 with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
-    # per-layer attention score+context FLOPs, summed over the batch
     attn_flops = 3 * 2 * (2 * T * T * 1536) * 32 * batch_size    
     flops_per_step = 6 * N_params * tokens_per_step + 0
 

@@ -101,6 +101,7 @@ class rms_norm(nn.Module):
         return x_norm
 
 
+
 #SWIGLU
 class swiglu(nn.Module):
     def __init__(self,in_dim,out_dim):
@@ -329,20 +330,34 @@ class Transformer(nn.Module):
         self.register_buffer("sin",sin)
         self.register_buffer("mask",mask)
 
+        self.d_model=d_model
 
-    def forward(self,x,step_count):
+
+    def forward(self,x):
         x=self.embedding(x)
         B,T,C=x.shape
-
+        
         for i,trans_block in enumerate(self.transformer_block_list):
             x=trans_block(x,self.mask[:T,:T],self.cos[:T],self.sin[:T])
 
         x=self.rms_norm(x)
         return x
 
+    def generate(self,x,seq_len,temperature=1.0):
+        self.eval()
+        max_ctx=self.mask.shape[0]
+        with torch.no_grad():
+            for _ in range(seq_len):
+                x_cond=x[:,-max_ctx:]                             
+                out=self.forward(x_cond)
+                logits=out[:,-1,:]@self.embedding.weight.T      
+                prob=F.softmax(logits.float()/temperature,dim=-1)
+                pred=torch.multinomial(prob,num_samples=1)        
+                x=torch.cat([x,pred],dim=1)                        
+        return x
 
 
-# if __name__=="__main__":
+if __name__=="__main__":
 
 #     x=torch.randn(5,3,2)
 #     y=torch.ones(5,3).long()
@@ -364,8 +379,13 @@ class Transformer(nn.Module):
 #     # x=torch.arange(1024)
 #     # x=torch.stack((x,x,x,x,x,x),dim=0).to("cuda:3")
 #     # x=x.to(torch.bfloat16)
+      x=torch.tensor([32]).to("cuda:0")
+      x=x.view(1,-1)
+      print(x.shape,x)
+      trans=Transformer(50,400,100,128,4,8,0,512,0).to("cuda:0")
+      out=trans.generate(x,5)
+      print(out)
 
-#     trans=Transformer(50000,4096,10000,1536,12,32,0.1,5120,0.1)
 #     trans=trans.to(torch.bfloat16).to("cuda:3")
 
 #     print("IOKK")

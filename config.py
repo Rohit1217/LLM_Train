@@ -3,8 +3,8 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
-    BATCH_SIZE:int = 21
-    SEQ_LEN:int = 1024
+    BATCH_SIZE:int = 20
+    SEQ_LEN:int = 1025
 
     D_MODEL:int = 1536
     VOCAB_SIZE:int = 48000
@@ -19,10 +19,10 @@ class Config:
 
     NUM_GROUPS=4
 
-    DEVICE:str = "cuda:0"
-    SEED:int = 1337
+    DEVICE:str = "cuda:6"
+    SEED:int = 133721
 
-    TOTAL_TOKENS:int = 10**6
+    TOTAL_TOKENS:int = 10**8
     A6000_BF16_PEAK :float= 154e12
     THROUGHPUT_TARGET:float = 15805   # tok/s baseline
     PEAK_MFU_TARGET:float = 0.56
