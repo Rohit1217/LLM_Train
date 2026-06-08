@@ -17,7 +17,10 @@ class Config:
     ATT_DROPOUT:float = 0
     FFN_DROPOUT:float = 0
 
-    NUM_GROUPS=4
+    NUM_GROUPS:int=4
+    MTP_HEADS:int=3
+    MTP_LOSS_WEIGHT:float=1e-4
+
 
     DEVICE:str = "cuda:6"
     SEED:int = 133721
@@ -29,6 +32,7 @@ class Config:
 
 
     def __post_init__(self):
+        self.EFF_SEQ_LEN:int=self.SEQ_LEN+self.MTP_HEADS
         self.TOKENS_PER_STEP = self.BATCH_SIZE*self.SEQ_LEN
         self.TOTAL_STEPS = self.TOTAL_TOKENS//self.TOKENS_PER_STEP
 

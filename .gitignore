@@ -12,6 +12,9 @@ __pycache__/
 *.bin
 resreve.bin
 
+#weights
+*.pth
+
 # Profiling / debug artifacts
 *.nsys-rep
 *.log

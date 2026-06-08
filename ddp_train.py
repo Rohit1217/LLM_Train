@@ -42,13 +42,13 @@ run = wandb.init(
 )
 
 
-dataset=generate_shakespeare_dataset(cfg.SEQ_LEN,cfg.BATCH_SIZE)
+dataset=generate_shakespeare_dataset(cfg.EFF_SEQ_LEN,cfg.BATCH_SIZE)
 dataloader=load_data(dataset,cfg.BATCH_SIZE)
 #MODEL DEFINIION
 transformer_model=Transformer(vocab_size=cfg.VOCAB_SIZE,max_context=cfg.MAX_CONTEXT,
                               max_freq=cfg.MAX_FREQ,d_model=cfg.D_MODEL,n_heads=cfg.N_HEAD,
                               num_layers=cfg.NUM_LAYERS,attn_dropout=cfg.ATT_DROPOUT,
-                              ffn_hidden_dim=cfg.FFN_HIDDEN_DIM,ffn_dropout=cfg.FFN_DROPOUT)
+                              ffn_hidden_dim=cfg.FFN_HIDDEN_DIM,ffn_dropout=cfg.FFN_DROPOUT,mtp_heads=cfg.MTP_HEADS)
 
 transformer_model=transformer_model.to(cfg.DEVICE)
 
@@ -95,20 +95,34 @@ wsd_scheduler_muon=SequentialLR(muon_optim,[warmup_scheduler_muon,stable_schedul
 
 
 
-#LIGER FUSED CE KERNEL
+#LIGER FUSED CE KERNEL NAIN AND MTP
 lse_square_scale=1e-4
-liger_fused_ce=LigerFusedLinearCrossEntropyLoss(lse_square_scale=1e-4,return_z_loss=True)
-#TRAIN STEP FOR TORCH COMPILE OPTIMIZATION
-def train_step(transformer_model,x,d_model):
-    y=x[:,1:].contiguous()                              
-    x=x[:,:-1].contiguous()                             
-    hidden_state=transformer_model(x)                    
+liger_fused_ce_main=LigerFusedLinearCrossEntropyLoss(lse_square_scale=1e-4,return_z_loss=True)
+liger_fused_ce_mtp=LigerFusedLinearCrossEntropyLoss()
 
-    out=liger_fused_ce(transformer_model.embedding.weight,
-                       hidden_state.view(-1,d_model),y.view(-1))
-    loss,z_loss=out.loss,out.z_loss
+
+#TRAIN STEP FOR TORCH COMPILE OPTIMIZATION
+def train_step(transformer_model,x,d_model,mtp_k=0,mtp_weight=0):
+    B,T=x.shape
+
+    y_main=x[:,1:T-mtp_k].contiguous().view(-1) #SHIFT BY ONE TEACHER FORCING
+    y_mtp=x[:,1:].unfold(1,4,1).permute(1,0,2).contiguous().view(-1) # SHIFT BY ONE FOR EACH MTP THEN PERMUTE TO GET MTP0|MTP!.. ORDERIING
+
+    hidden_states=transformer_model(x)                    
+
+    out=liger_fused_ce_main(transformer_model.embedding.weight,
+                       hidden_states[:B,:,:].view(-1,d_model),y_main)
+    main_loss,main_z_loss=out.loss,out.z_loss
+    loss=main_loss
+    
+    if mtp_weight>0:
+        mtp_loss=liger_fused_ce_mtp(transformer_model.embedding.weight,
+                            hidden_states[B:,:,:].view(-1,d_model),y_mtp)
+        loss=loss+mtp_weight*mtp_loss
+    
     loss.backward()
-    logsumexp_avg=z_loss/lse_square_scale
+
+    logsumexp_avg=main_z_loss/lse_square_scale
     return loss,logsumexp_avg
 
 #TORCH COMPILE
@@ -142,7 +156,8 @@ with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
 
         #OPTIMIZED FORWARD BACKWARD PASS
         fwd_start=time.time()
-        loss,logsumexp_avg=optimized_train_step(transformer_model,x,d_model=cfg.D_MODEL)
+        loss,logsumexp_avg=optimized_train_step(transformer_model,x,d_model=cfg.D_MODEL,
+                                                mtp_weight=cfg.MTP_LOSS_WEIGHT,mtp_k=cfg.MTP_HEADS)
 
         #CLIP NORM
         norm=torch.nn.utils.clip_grad_norm_(transformer_model.parameters(), max_norm=1.0) #CLIP NORM
@@ -168,11 +183,11 @@ with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
         #LOGGING
         # torch.cuda.synchronize()
         f_time=time.time()
-        tokens_seen+=cfg.BATCH_SIZE*cfg.SEQ_LEN
+        tokens_seen+=cfg.BATCH_SIZE*cfg.EFF_SEQ_LEN
         step_time=round(f_time-s_time,4)
         data_io_time=fwd_start-s_time
-        mfu=wl.compute_mfu(step_time,cfg.SEQ_LEN,cfg.BATCH_SIZE,num_non_embed_params,cfg.A6000_BF16_PEAK)
-        token_throughput=(cfg.BATCH_SIZE*cfg.SEQ_LEN)/step_time
+        mfu=wl.compute_mfu(step_time,cfg.EFF_SEQ_LEN,cfg.BATCH_SIZE,num_non_embed_params,cfg.A6000_BF16_PEAK)
+        token_throughput=(cfg.BATCH_SIZE*cfg.EFF_SEQ_LEN)/step_time
 
         loss_train=loss.item()
         #RAW BIASED EMA CARRIES FORWARD; BIAS-CORRECT ONLY FOR LOGGING

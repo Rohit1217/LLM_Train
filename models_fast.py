@@ -223,7 +223,7 @@ class mhma(nn.Module):
         # return x
 
 #TRANSFORMER BLOCK WITH FFN AND SELF ATTENTION BLOCK
-class transformer_block(nn.Module):
+class Transformer_block(nn.Module):
     def __init__(self,d_model,n_heads,num_layers,attn_dropout,ffn_hidden_dim,ffn_dropout):
         super().__init__()
 
@@ -280,8 +280,7 @@ class gqa(nn.Module):
         x=self.linear_proj(x)
 
         x+=residual
-        return x
-
+        return x        
 
 
 def cross_entropy_loss(x,y): #MULTICLASS CROSS ENTROPY WITH LOGITS COMING AND Y IS LABEL BOTH TENSOR SHAPE (B,T,D) and B,T
@@ -309,19 +308,42 @@ class embedding(nn.Module):
 
     def forward(self,x):
         return self.weight[x]
+
+class mtp_head(nn.Module):
+    def __init__(self,d_model,n_heads,num_layers,attn_dropout,ffn_hidden_dim,ffn_dropout):
+        super().__init___()
+        self.proj=linear_proj(2*d_model,d_model,num_layers=1)
+        
+        self.rms_embed=rms_norm(d_model)
+        self.rms_out=rms_norm(d_model)
+
+        self.trans_block=Transformer_block(d_model,n_heads,num_layers,attn_dropout,ffn_hidden_dim,ffn_dropout)
     
+    def forward(self,h,embed,mask,cos,sin):
+        x=torch.cat([h,self.rms_embed(embed)],dim=-1)
+        x=self.proj(x)
+        x=self.trans_block(x,mask,cos,sin)
+        return self.rms_out(x)
+
 
 #TRANSFORMER WITH ALL THE BLOCKS BUILT EARLIER
 class Transformer(nn.Module):
-    def __init__(self,vocab_size,max_context,max_freq,d_model,n_heads,num_layers,attn_dropout,ffn_hidden_dim,ffn_dropout):
+    def __init__(self,vocab_size,max_context,max_freq,d_model,n_heads,num_layers,attn_dropout,ffn_hidden_dim,ffn_dropout,mtp_heads=None):
         super().__init__()
 
         self.embedding = nn.Embedding(vocab_size, d_model)
-        self.transformer_block_list=nn.ModuleList([transformer_block(d_model,n_heads,num_layers,attn_dropout,ffn_hidden_dim,ffn_dropout) for idx in range(num_layers)])
+        self.transformer_block_list=nn.ModuleList([Transformer_block(d_model,n_heads,num_layers,attn_dropout,
+                                                                     ffn_hidden_dim,ffn_dropout) for idx in range(num_layers)])
         
-        self.rms_norm=rms_norm(d_model)
+        self.rms_out=rms_norm(d_model)
 
         head_dim=d_model//n_heads
+
+        if mtp_heads:
+            self.mtp_heads_list=nn.ModuleList([mtp_head(d_model,n_heads,num_layers,attn_dropout,
+                                                          ffn_hidden_dim,ffn_dropout) for idx in range(mtp_heads)])
+        else:
+            self.mtp_heads_list=[]
         # perm,alt_bit=permute_indcies_rope(head_dim)
         cos,sin=precompute_rope_fast(max_context,max_freq,head_dim)
         mask=torch.triu(torch.ones(max_context,max_context),diagonal=1).bool()
@@ -331,17 +353,26 @@ class Transformer(nn.Module):
         self.register_buffer("mask",mask)
 
         self.d_model=d_model
+        self.num_mtp_heads=len(self.mtp_heads_list)
 
 
     def forward(self,x):
-        x=self.embedding(x)
-        B,T,C=x.shape
-        
+        x_embed=self.embedding(x) #B,T+mtp_heads,D
+        B,T,C=x_embed.shape
+        x=x_embed[:,:T-self.num_mtp_heads,:].contiguous() 
+
         for i,trans_block in enumerate(self.transformer_block_list):
             x=trans_block(x,self.mask[:T,:T],self.cos[:T],self.sin[:T])
+        
+        x=self.rms_out(x)
+        prev_h_rms=x
 
-        x=self.rms_norm(x)
-        return x
+        for i,mtp_head in enumerate(self.mtp_heads_list):
+            embed=x_embed[:,T+i:T-self.num_mtp_heads+i,:].contiguous() 
+            x=mtp_head(x,embed,self.mask[:T,:T],self.cos[:T],self.sin[:T])
+            prev_h_rms=torch.cat([prev_h_rms,x],dim=0)
+
+        return prev_h_rms #OUTPUT B*(mtp_heads+1),T,D_MODEL
 
     def generate(self,x,seq_len,temperature=1.0):
         self.eval()
