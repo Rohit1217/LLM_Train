@@ -3,23 +3,23 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
-    BATCH_SIZE:int = 20
-    SEQ_LEN:int = 1025
+    BATCH_SIZE:int = 18
+    SEQ_LEN:int = 1024
 
     D_MODEL:int = 1536
     VOCAB_SIZE:int = 48000
     MAX_CONTEXT:int = 8192
     MAX_FREQ:int = 10000
     N_HEAD:int = 12
-    NUM_LAYERS:int = 32
+    NUM_LAYERS:int = 30
     FFN_HIDDEN_DIM:int = 4096
 
     ATT_DROPOUT:float = 0
     FFN_DROPOUT:float = 0
 
     NUM_GROUPS:int=4
-    MTP_HEADS:int=3
-    MTP_LOSS_WEIGHT:float=1e-4
+    MTP_HEADS:int=2
+    MTP_LOSS_WEIGHT:float=0.3
 
 
     DEVICE:str = "cuda:6"
@@ -32,7 +32,7 @@ class Config:
 
 
     def __post_init__(self):
-        self.EFF_SEQ_LEN:int=self.SEQ_LEN+self.MTP_HEADS
+        self.EFF_SEQ_LEN:int=self.SEQ_LEN+self.MTP_HEADS+1
         self.TOKENS_PER_STEP = self.BATCH_SIZE*self.SEQ_LEN
         self.TOTAL_STEPS = self.TOTAL_TOKENS//self.TOKENS_PER_STEP
 

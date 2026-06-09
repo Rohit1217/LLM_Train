@@ -4,7 +4,7 @@ import os
 # os.environ["TORCH_USE_CUDA_DSA"]="1"
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
+os.environ["TORCHDYNAMO_VERBOSE"]="1"
 import torch
 
 from models_fast import Transformer
@@ -33,7 +33,7 @@ cfg=Config()
 torch.manual_seed(cfg.SEED)
 
 #MODEL
-run_id="Run_overfit-1-2"
+run_id="Run_overfit-1-mtp"
 run = wandb.init(
     entity="rohit_iisc-indian-institute-of-science",
     project="llm_overfit",
@@ -106,7 +106,6 @@ def train_step(transformer_model,x,d_model,mtp_k=0,mtp_weight=0):
     B,T=x.shape
 
     y_main=x[:,1:T-mtp_k].contiguous().view(-1) #SHIFT BY ONE TEACHER FORCING
-    y_mtp=x[:,1:].unfold(1,4,1).permute(1,0,2).contiguous().view(-1) # SHIFT BY ONE FOR EACH MTP THEN PERMUTE TO GET MTP0|MTP!.. ORDERIING
 
     hidden_states=transformer_model(x)                    
 
@@ -116,6 +115,8 @@ def train_step(transformer_model,x,d_model,mtp_k=0,mtp_weight=0):
     loss=main_loss
     
     if mtp_weight>0:
+        y_mtp=x[:,2:].unfold(1,mtp_k,1).permute(2,0,1).contiguous().view(-1) # SHIFT BY ONE FOR EACH MTP THEN PERMUTE TO GET MTP0|MTP!.. ORDERIING
+
         mtp_loss=liger_fused_ce_mtp(transformer_model.embedding.weight,
                             hidden_states[B:,:,:].view(-1,d_model),y_mtp)
         loss=loss+mtp_weight*mtp_loss
@@ -125,8 +126,11 @@ def train_step(transformer_model,x,d_model,mtp_k=0,mtp_weight=0):
     logsumexp_avg=main_z_loss/lse_square_scale
     return loss,logsumexp_avg
 
-#TORCH COMPILE
-optimized_train_step=torch.compile(train_step,mode="max-autotune-no-cudagraphs")
+#TORCH COMPILE — COMPILE MODEL FORWARD ONLY. Liger graph-breaks on its internal .item();
+#with 2 Liger calls (main+mtp) the resume frame wraps a Triton kernel and crashes Inductor's
+#decompose_triton_kernel_wrapper_functional pass. Compiling the model alone captures ~all FLOPs;
+#loss+backward run eager (Liger is its own fused kernel; compiled fwd keeps its AOT backward).
+optimized_model=torch.compile(transformer_model,mode="max-autotune-no-cudagraphs")
 
 tokens_seen=0
 data_iter=cycle(dataloader)
@@ -152,12 +156,12 @@ with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
         #DATA LOAD TO GPU
         x=next(data_iter)
         shard_ids=x[0]    
-        x=x[1].squeeze().to(cfg.DEVICE)
+        x=x[1].to(cfg.DEVICE)
 
         #OPTIMIZED FORWARD BACKWARD PASS
         fwd_start=time.time()
-        loss,logsumexp_avg=optimized_train_step(transformer_model,x,d_model=cfg.D_MODEL,
-                                                mtp_weight=cfg.MTP_LOSS_WEIGHT,mtp_k=cfg.MTP_HEADS)
+        loss,logsumexp_avg=train_step(optimized_model,x,d_model=cfg.D_MODEL,
+                                      mtp_weight=cfg.MTP_LOSS_WEIGHT,mtp_k=cfg.MTP_HEADS)
 
         #CLIP NORM
         norm=torch.nn.utils.clip_grad_norm_(transformer_model.parameters(), max_norm=1.0) #CLIP NORM

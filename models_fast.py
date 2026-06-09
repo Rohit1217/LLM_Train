@@ -311,7 +311,7 @@ class embedding(nn.Module):
 
 class mtp_head(nn.Module):
     def __init__(self,d_model,n_heads,num_layers,attn_dropout,ffn_hidden_dim,ffn_dropout):
-        super().__init___()
+        super().__init__()
         self.proj=linear_proj(2*d_model,d_model,num_layers=1)
         
         self.rms_embed=rms_norm(d_model)
@@ -357,19 +357,23 @@ class Transformer(nn.Module):
 
 
     def forward(self,x):
-        x_embed=self.embedding(x) #B,T+mtp_heads,D
+        x_embed=self.embedding(x) #B,T+mtp_heads+1,D
         B,T,C=x_embed.shape
-        x=x_embed[:,:T-self.num_mtp_heads,:].contiguous() 
+        L=T-self.num_mtp_heads-1 #L seq length model sees
 
+        x=x_embed[:,:L,:].contiguous() 
+
+        #MAIN  BLOCK
         for i,trans_block in enumerate(self.transformer_block_list):
-            x=trans_block(x,self.mask[:T,:T],self.cos[:T],self.sin[:T])
+            x=trans_block(x,self.mask[:L,:L],self.cos[:L],self.sin[:L])
         
         x=self.rms_out(x)
         prev_h_rms=x
 
+        #MTP HEADS
         for i,mtp_head in enumerate(self.mtp_heads_list):
-            embed=x_embed[:,T+i:T-self.num_mtp_heads+i,:].contiguous() 
-            x=mtp_head(x,embed,self.mask[:T,:T],self.cos[:T],self.sin[:T])
+            embed=x_embed[:,1+i:L+1+i,:].contiguous() 
+            x=mtp_head(x,embed,self.mask[:L,:L],self.cos[:L],self.sin[:L])
             prev_h_rms=torch.cat([prev_h_rms,x],dim=0)
 
         return prev_h_rms #OUTPUT B*(mtp_heads+1),T,D_MODEL
@@ -377,11 +381,14 @@ class Transformer(nn.Module):
     def generate(self,x,seq_len,temperature=1.0):
         self.eval()
         max_ctx=self.mask.shape[0]
+        pad=self.num_mtp_heads+1   #FORWARD DROPS num_mtp_heads+1 TOKENS (TEACHER-FORCING SHIFT); PAD SO LAST REAL TOKEN EMITS NEXT-TOKEN LOGITS
+        B=x.shape[0]
         with torch.no_grad():
             for _ in range(seq_len):
-                x_cond=x[:,-max_ctx:]                             
-                out=self.forward(x_cond)
-                logits=out[:,-1,:]@self.embedding.weight.T      
+                x_cond=x[:,-(max_ctx-pad):]
+                x_in=F.pad(x_cond,(0,pad))                       #APPEND pad DUMMY TOKENS (CAUSAL-MASKED, DONT AFFECT hidden[n-1])
+                out=self.forward(x_in)                           #(B*(num_mtp+1),n,D) -> MAIN HEAD IS FIRST B ROWS
+                logits=out[:B,-1,:]@self.embedding.weight.T
                 prob=F.softmax(logits.float()/temperature,dim=-1)
                 pred=torch.multinomial(prob,num_samples=1)        
                 x=torch.cat([x,pred],dim=1)                        

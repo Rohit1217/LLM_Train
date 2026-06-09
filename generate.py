@@ -17,16 +17,21 @@ def encode_prompt(s):
 
 
 def decode(ids):
-    # model can emit ids up to VOCAB_SIZE; guard ids outside the char vocab
+    # pull off-GPU once (iterating a cuda tensor syncs per element); guard ids outside char vocab
+    if torch.is_tensor(ids):
+        ids = ids.tolist()
     return "".join(itos.get(int(i), "") for i in ids)
 
 
 def load_model(weights="model_weights.pth"):
     model = Transformer(vocab_size=cfg.VOCAB_SIZE, max_context=cfg.MAX_CONTEXT,
                         max_freq=cfg.MAX_FREQ, d_model=cfg.D_MODEL, n_heads=cfg.N_HEAD,
-                        num_layers=cfg.NUM_LAYERS, attn_dropout=cfg.ATT_DROPOUT,
+                        num_layers=cfg.NUM_LAYERS+2, attn_dropout=cfg.ATT_DROPOUT,
                         ffn_hidden_dim=cfg.FFN_HIDDEN_DIM, ffn_dropout=cfg.FFN_DROPOUT)
     state = torch.load(weights, map_location=device)
+    # old checkpoints named the final norm "rms_norm"; it's "rms_out" now
+    state = {("rms_out." + k[len("rms_norm."):] if k.startswith("rms_norm.") else k): v
+             for k, v in state.items()}
     model.load_state_dict(state)
     return model.to(device).to(torch.bfloat16).eval()
 
@@ -44,4 +49,6 @@ if __name__ == "__main__":
     for p in prompts:
         print("=" * 60)
         print(f"prompt: {p!r}")
-        print(sample(model, prompt=p, n_new=200, temperature=0.8))
+        print(sample(model, prompt=p, n_new=200, temperature=0.5))
+
+    print(sample(model,"Before we proceed any further, hear me speak.",200,temperature=0.01))    
