@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
-    BATCH_SIZE:int = 18
+    BATCH_SIZE:int = 20
     SEQ_LEN:int = 1024
 
     D_MODEL:int = 1536

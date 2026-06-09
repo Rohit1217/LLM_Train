@@ -1,4 +1,8 @@
 import os
+os.environ["TORCH_LOGS"] = "all"
+# Optional: This forces PyTorch to output deep compiler details
+os.environ["TORCH_COMPILE_DEBUG"] = "1" 
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -224,10 +228,14 @@ class mhma(nn.Module):
 
 #TRANSFORMER BLOCK WITH FFN AND SELF ATTENTION BLOCK
 class Transformer_block(nn.Module):
-    def __init__(self,d_model,n_heads,num_layers,attn_dropout,ffn_hidden_dim,ffn_dropout):
+    def __init__(self,d_model,n_heads,num_layers,attn_dropout,ffn_hidden_dim,ffn_dropout,gqa_groups=0):
         super().__init__()
 
-        self.att=mhma(d_model,n_heads,num_layers,attn_dropout)
+        if gqa_groups<=0:
+            self.att=mhma(d_model,n_heads,num_layers,attn_dropout)
+        else:
+            self.att=gqa(d_model,n_heads,num_layers,attn_dropout,gqa_groups)
+
         self.ffn=ffn_router(d_model,ffn_hidden_dim,num_layers,ffn_dropout)
         self.rms_norm_ffn=rms_norm(d_model)
 
@@ -259,24 +267,19 @@ class gqa(nn.Module):
         x=self.rms_norm_att(residual)
 
         q =self.q_proj(x)
-        q=q.view(B,T,self.kvn_heads,self.groups,self.head_dim)
-        q=q.permute(0,2,3,1,4)
+        q=q.view(B,T,self.kvn_heads*self.groups,self.head_dim)
+        q=q.permute(0,2,1,3)
 
         kv=self.kv_proj(x)
-        kv=kv.view(B,T,2,self.kvn_heads,self.head_dim).unsqueeze(-2)
-        k,v=kv.permute(0,2,3,4,1,5).unbind(dim=1)
+        kv=kv.view(B,T,2,self.kvn_heads,self.head_dim)
+        k,v=kv.permute(0,2,3,1,4).unbind(dim=1)
+
 
         q,k=apply_rope(q,cos,sin),apply_rope(k,cos,sin)
-        att=q@k.transpose(-2,-1)/(self.head_dim**0.5)
-
-        if mask is not None:
-            att=att.masked_fill(mask,-torch.inf)
-
-        att=F.softmax(att.float(),dim=-1).to(x.dtype)
-        att = self.attn_drop(att)
-
-        x=(att@v).permute(0,3,1,2,4).contiguous()
+        x = F.scaled_dot_product_attention(q, k, v,is_causal=True,enable_gqa=True)
+        x=x.permute(0,2,1,3).contiguous()
         x=x.view(B,T,D)
+        
         x=self.linear_proj(x)
 
         x+=residual
@@ -310,14 +313,14 @@ class embedding(nn.Module):
         return self.weight[x]
 
 class mtp_head(nn.Module):
-    def __init__(self,d_model,n_heads,num_layers,attn_dropout,ffn_hidden_dim,ffn_dropout):
+    def __init__(self,d_model,n_heads,num_layers,attn_dropout,ffn_hidden_dim,ffn_dropout,gqa_groups):
         super().__init__()
         self.proj=linear_proj(2*d_model,d_model,num_layers=1)
         
         self.rms_embed=rms_norm(d_model)
         self.rms_out=rms_norm(d_model)
 
-        self.trans_block=Transformer_block(d_model,n_heads,num_layers,attn_dropout,ffn_hidden_dim,ffn_dropout)
+        self.trans_block=Transformer_block(d_model,n_heads,num_layers,attn_dropout,ffn_hidden_dim,ffn_dropout,gqa_groups)
     
     def forward(self,h,embed,mask,cos,sin):
         x=torch.cat([h,self.rms_embed(embed)],dim=-1)
@@ -328,12 +331,12 @@ class mtp_head(nn.Module):
 
 #TRANSFORMER WITH ALL THE BLOCKS BUILT EARLIER
 class Transformer(nn.Module):
-    def __init__(self,vocab_size,max_context,max_freq,d_model,n_heads,num_layers,attn_dropout,ffn_hidden_dim,ffn_dropout,mtp_heads=None):
+    def __init__(self,vocab_size,max_context,max_freq,d_model,n_heads,num_layers,attn_dropout,ffn_hidden_dim,ffn_dropout,mtp_heads=None,gqa_groups=0):
         super().__init__()
 
         self.embedding = nn.Embedding(vocab_size, d_model)
         self.transformer_block_list=nn.ModuleList([Transformer_block(d_model,n_heads,num_layers,attn_dropout,
-                                                                     ffn_hidden_dim,ffn_dropout) for idx in range(num_layers)])
+                                                                     ffn_hidden_dim,ffn_dropout,gqa_groups) for idx in range(num_layers)])
         
         self.rms_out=rms_norm(d_model)
 
@@ -341,7 +344,7 @@ class Transformer(nn.Module):
 
         if mtp_heads:
             self.mtp_heads_list=nn.ModuleList([mtp_head(d_model,n_heads,num_layers,attn_dropout,
-                                                          ffn_hidden_dim,ffn_dropout) for idx in range(mtp_heads)])
+                                                          ffn_hidden_dim,ffn_dropout,gqa_groups) for idx in range(mtp_heads)])
         else:
             self.mtp_heads_list=[]
         # perm,alt_bit=permute_indcies_rope(head_dim)
@@ -357,6 +360,7 @@ class Transformer(nn.Module):
 
 
     def forward(self,x):
+        print(x.dtype)
         x_embed=self.embedding(x) #B,T+mtp_heads+1,D
         B,T,C=x_embed.shape
         L=T-self.num_mtp_heads-1 #L seq length model sees
@@ -417,12 +421,15 @@ if __name__=="__main__":
 #     # x=torch.arange(1024)
 #     # x=torch.stack((x,x,x,x,x,x),dim=0).to("cuda:3")
 #     # x=x.to(torch.bfloat16)
-      x=torch.tensor([32]).to("cuda:0")
-      x=x.view(1,-1)
-      print(x.shape,x)
-      trans=Transformer(50,400,100,128,4,8,0,512,0).to("cuda:0")
-      out=trans.generate(x,5)
-      print(out)
+    with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+
+        x=torch.tensor([33]).to("cuda:7")
+        x=torch.ones((4,5)).to("cuda:7").long()
+        # x=x.view(1,-1)
+
+        trans=Transformer(50,400,100,128,4,8,0,512,0,None,2).to("cuda:7").to(torch.bfloat16)
+        out=trans(x)
+        print(out,out.shape)
 
 #     trans=trans.to(torch.bfloat16).to("cuda:3")
 

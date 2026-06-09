@@ -144,6 +144,8 @@ alpha=0.05
 def save_model(model):
     torch.save(model.state_dict(), "model_weights.pth")
 
+
+
 with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
 
     for global_step in tqdm(range(cfg.TOTAL_STEPS)):
