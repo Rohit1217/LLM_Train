@@ -3,6 +3,8 @@ import os
 # # Optional: This forces PyTorch to output deep compiler details
 # os.environ["TORCH_COMPILE_DEBUG"] = "1" 
 
+""" from-scratch implementations,with redundancy and all are not used in training — see main_models.py for the live model """
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

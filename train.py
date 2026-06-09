@@ -7,7 +7,7 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["TORCHDYNAMO_VERBOSE"]="1"
 import torch
 
-from models_fast import Transformer
+from main_models import Transformer
 from Data.data import load_data
 from Data.process_tiny_shakespeare import generate_shakespeare_dataset
 
@@ -176,8 +176,8 @@ with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
             wl.log_activations(run,global_step,transformer_model,x)
 
         #OPTIM STEP
-        muon_optim.step()
-        adamw_optim.step()
+        muon_optim.step() # WILL CORRECT WITH MP IMPLEMENTATION
+        adamw_optim.step() # WILL CORRECT WITH MP IMPLEMENTATION
 
         #SCHEDULER STEP
         wsd_scheduler_adam.step()
