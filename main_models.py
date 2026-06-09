@@ -290,6 +290,12 @@ class Transformer(nn.Module):
                 parent = self.get_submodule(name.rsplit(".", 1)[0]) if "." in name else self
                 attr   = name.rsplit(".", 1)[-1]
                 setattr(parent, attr, buffer.float()) 
+    
+    def make_buffers_none(self):
+        for name, buffer in list(self.named_buffers()):       
+            parent = self.get_submodule(name.rsplit(".", 1)[0]) if "." in name else self
+            attr   = name.rsplit(".", 1)[-1]
+            setattr(parent, attr,None) 
 
 
 if __name__=="__main__":

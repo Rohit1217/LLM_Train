@@ -44,14 +44,15 @@ def compute_mfu(step_time, seq_len, batch_size, num_params, peak_flops):
     return (6 * batch_size * seq_len * num_params) / (peak_flops * step_time)
 
 
-#PER-STEP SCALARS (loss / perf / lr / global grad norm)
-def log_step_metrics(run, step, *, loss, grad_norm, lr_adamw, lr_muon,
+#PER-STEP SCALARS (loss / perf / lr / per-group grad norm)
+def log_step_metrics(run, step, *, loss, grad_norm_muon, grad_norm_adamw, lr_adamw, lr_muon,
                      tokens_seen, throughput, step_time, data_io, mfu):
     run.log({
         "perf/tokens_seen": tokens_seen,
         "loss/ce_loss": loss,
         "loss/perplexity": torch.exp(loss + 1e-9),
-        "grad/global_grad_norm": grad_norm,
+        "grad/grad_norm_muon_2d": grad_norm_muon,
+        "grad/grad_norm_adamw_1d": grad_norm_adamw,
         "opt/last_lr_adamw": lr_adamw,
         "opt/last_lr_muon": lr_muon,
         "perf/token_throughput": throughput,

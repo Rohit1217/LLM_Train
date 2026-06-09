@@ -21,6 +21,8 @@ class Config:
     MTP_HEADS:int=2
     MTP_LOSS_WEIGHT:float=0.3
 
+    WEIGHT_DECAY:float=0.1
+    LR:float=2e-4
 
     DEVICE:str = "cuda:6"
     SEED:int = 133721
