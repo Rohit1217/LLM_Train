@@ -16,7 +16,7 @@ torch._logging.set_logs(
     graph_breaks=True
 )
 
-from models_fast import Transformer
+from main_models import Transformer
 from einops import repeat
 
 

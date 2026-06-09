@@ -8,8 +8,8 @@ os.environ["TORCHDYNAMO_VERBOSE"]="1"
 import torch
 
 from models_fast import Transformer
-from data import load_data
-from process_tiny_shakespeare import generate_shakespeare_dataset
+from Data.data import load_data
+from Data.process_tiny_shakespeare import generate_shakespeare_dataset
 
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import AdamW,Muon
@@ -64,33 +64,34 @@ param_2d=[p for n,p in transformer_model.named_parameters() if p.ndim==2 and "em
 param_1d_embed=[p for n,p in transformer_model.named_parameters() if p.ndim==1 or "embed" in n]
 
 #OPTIMIZER ADAMW AND MUON
-adamw_optim=AdamW(param_1d_embed,lr=2e-4,betas=[0.9,0.95],weight_decay=0.1)
-muon_optim=Muon(param_2d,lr=2e-4,weight_decay=0.1,momentum=0.95,adjust_lr_fn="match_rms_adamw")
+adamw_optim_bf16=AdamW(param_1d_embed,lr=2e-4,betas=[0.9,0.95],weight_decay=0.1)
+muon_optim_bf16=Muon(param_2d,lr=2e-4,weight_decay=0.1,momentum=0.95,adjust_lr_fn="match_rms_adamw")
 
 transformer_model=transformer_model.to(dtype=torch.bfloat16)
+transformer_model.buffers_to_float()
 # transformer_model.embedding=transformer_model.embedding.to(dtype=torch.float32)
 
 
 #WSD SCHEDULER ADAM AND MUON
-warmup_scheduler_adam=LinearLR(adamw_optim,start_factor=1e-4,end_factor=1,
+warmup_scheduler_adam=LinearLR(adamw_optim_bf16,start_factor=1e-4,end_factor=1,
                                total_iters=cfg.WARMUP_STEPS)
-stable_scheduler_adam=ConstantLR(adamw_optim,factor=1,
+stable_scheduler_adam=ConstantLR(adamw_optim_bf16,factor=1,
                                  total_iters=cfg.STABLE_STEPS)
-decay_scheduler_adam=LinearLR(adamw_optim,start_factor=1,
+decay_scheduler_adam=LinearLR(adamw_optim_bf16,start_factor=1,
                               end_factor=1e-4,total_iters=cfg.DECAY_STEPS)
 
-wsd_scheduler_adam=SequentialLR(adamw_optim,[warmup_scheduler_adam,stable_scheduler_adam,
+wsd_scheduler_adam=SequentialLR(adamw_optim_bf16,[warmup_scheduler_adam,stable_scheduler_adam,
                                              decay_scheduler_adam],
                                 milestones=[cfg.WARMUP_STEPS,cfg.WARMUP_STEPS+cfg.STABLE_STEPS])
 
-warmup_scheduler_muon=LinearLR(muon_optim,start_factor=1e-4,end_factor=1,
+warmup_scheduler_muon=LinearLR(muon_optim_bf16,start_factor=1e-4,end_factor=1,
                                total_iters=cfg.WARMUP_STEPS)
-stable_scheduler_muon=ConstantLR(muon_optim,factor=1,
+stable_scheduler_muon=ConstantLR(muon_optim_bf16,factor=1,
                                  total_iters=cfg.STABLE_STEPS)
-decay_scheduler_muon=LinearLR(muon_optim,start_factor=1,
+decay_scheduler_muon=LinearLR(muon_optim_bf16,start_factor=1,
                               end_factor=1e-4,total_iters=cfg.DECAY_STEPS)
 
-wsd_scheduler_muon=SequentialLR(muon_optim,[warmup_scheduler_muon,stable_scheduler_muon,decay_scheduler_muon],
+wsd_scheduler_muon=SequentialLR(muon_optim_bf16,[warmup_scheduler_muon,stable_scheduler_muon,decay_scheduler_muon],
                                 milestones=[cfg.WARMUP_STEPS,cfg.WARMUP_STEPS+cfg.STABLE_STEPS])
 
 
@@ -152,8 +153,8 @@ with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
         s_time=time.time()
 
         #ZERO_GRAD
-        muon_optim.zero_grad()
-        adamw_optim.zero_grad()
+        muon_optim_bf16.zero_grad()
+        adamw_optim_bf16.zero_grad()
 
         #DATA LOAD TO GPU
         x=next(data_iter)

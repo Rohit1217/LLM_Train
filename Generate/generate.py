@@ -1,8 +1,8 @@
 import torch
 
 from config import Config
-from models_fast import Transformer
-from process_tiny_shakespeare import load_text, build_vocab
+from main_models import Transformer
+from Data.process_tiny_shakespeare import load_text, build_vocab
 
 cfg = Config()
 device = cfg.DEVICE
@@ -24,14 +24,16 @@ def decode(ids):
 
 
 def load_model(weights="model_weights.pth"):
+    # MTP heads are train-only: the main next-token head is just trunk + rms_out and is NOT
+    # touched by the MTP loop, so we build the TRUNK ALONE -> identical main-head output, faster
+    # generation (no MTP block per token), and generate() pads by 1 (num_mtp_heads=0).
     model = Transformer(vocab_size=cfg.VOCAB_SIZE, max_context=cfg.MAX_CONTEXT,
                         max_freq=cfg.MAX_FREQ, d_model=cfg.D_MODEL, n_heads=cfg.N_HEAD,
-                        num_layers=cfg.NUM_LAYERS+2, attn_dropout=cfg.ATT_DROPOUT,
+                        num_layers=cfg.NUM_LAYERS, attn_dropout=cfg.ATT_DROPOUT,
                         ffn_hidden_dim=cfg.FFN_HIDDEN_DIM, ffn_dropout=cfg.FFN_DROPOUT)
     state = torch.load(weights, map_location=device)
-    # old checkpoints named the final norm "rms_norm"; it's "rms_out" now
-    state = {("rms_out." + k[len("rms_norm."):] if k.startswith("rms_norm.") else k): v
-             for k, v in state.items()}
+    # drop MTP-head weights; remaining keys match the trunk 1:1 (strict load catches anything else)
+    state = {k: v for k, v in state.items() if not k.startswith("mtp_heads_list.")}
     model.load_state_dict(state)
     return model.to(device).to(torch.bfloat16).eval()
 
