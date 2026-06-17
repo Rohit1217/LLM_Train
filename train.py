@@ -16,7 +16,7 @@ from torch.optim import AdamW,Muon
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss
-from torch.optim.lr_scheduler import LinearLR,ConstantLR,StepLR,SequentialLR
+from torch.optim.lr_scheduler import LinearLR,ConstantLR,SequentialLR
 from config import Config 
 
 from tqdm import tqdm
@@ -31,7 +31,7 @@ cfg=Config()
 torch.manual_seed(cfg.SEED)
 
 #MODEL
-run_id="Run_overfit-1-mtp"
+run_id="Run_overfit-1-mtp_mp_small"
 run = wandb.init(
     entity="rohit_iisc-indian-institute-of-science",
     project="llm_overfit",
@@ -46,7 +46,8 @@ dataloader=load_data(dataset,cfg.BATCH_SIZE)
 transformer_model=Transformer(vocab_size=cfg.VOCAB_SIZE,max_context=cfg.MAX_CONTEXT,
                               max_freq=cfg.MAX_FREQ,d_model=cfg.D_MODEL,n_heads=cfg.N_HEAD,
                               num_layers=cfg.NUM_LAYERS,attn_dropout=cfg.ATT_DROPOUT,
-                              ffn_hidden_dim=cfg.FFN_HIDDEN_DIM,ffn_dropout=cfg.FFN_DROPOUT,mtp_heads=cfg.MTP_HEADS)
+                              ffn_hidden_dim=cfg.FFN_HIDDEN_DIM,ffn_dropout=cfg.FFN_DROPOUT,mtp_heads=cfg.MTP_HEADS,
+                              grad_checkpoint_every=cfg.GRAD_CHECKPOINT_EVERY)
 
 transformer_model=transformer_model.to(cfg.DEVICE)
 
@@ -175,6 +176,11 @@ def mp_opt_step(muon_optim,master_param_2d,master_param_1d,bf16_param_2d,
     muon_optim.step()
     adamw_optim.step()
 
+    for m in master_param_2d: 
+        m.grad = None      
+    for m in master_param_1d: 
+        m.grad = None   
+
     #fp32 MASTER COPIED TO BF16
     torch._foreach_copy_(bf16_param_2d,master_param_2d)
     torch._foreach_copy_(bf16_param_1d,master_param_1d)
@@ -187,8 +193,12 @@ def mp_opt_step(muon_optim,master_param_2d,master_param_1d,bf16_param_2d,
 
 
 with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+    
 
     for global_step in tqdm(range(cfg.TOTAL_STEPS)):
+        if global_step>5:
+            torch.cuda.profiler.start()
+
         s_time=time.time()
 
         #DATA LOAD TO GPU
@@ -205,6 +215,9 @@ with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
         is_log_step=(global_step+1) % LOG_EVERY == 0
         if is_log_step:
             prev=wl.snapshot_params(transformer_model)
+            run.log({"data/shard_ids":shard_ids},step=global_step,commit=False)
+
+            
 
         #MP OPTIMIZER STEP (eager + foreach): cast grads->fp32 master, clip, step, copy back
         norm2d,norm1d=mp_opt_step(muon_optim=muon_optim_fp32,master_param_2d=master_param_2d,master_param_1d=master_param_1d,
@@ -212,18 +225,20 @@ with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
                           wsd_scheduler_adam=wsd_scheduler_adam,wsd_scheduler_muon=wsd_scheduler_muon,
                           keep_grads=is_log_step)
 
-        #SAVE + ACTIVATIONS ON POST-STEP WEIGHTS
+        #SAVE + ACTIVATION STATS ON POST-STEP WEIGHTS (grads retained this step)
+        act_stats={}
         if is_log_step:
             save_model(transformer_model)
-            wl.log_activations(run,global_step,transformer_model,x)
+            act_stats=wl.activation_stats(transformer_model,x)
 
 
         # #VALIDATION
         # if (step%1000)==0:
         #     val_loss=eval(model)
 
-        #LOGGING
-        # torch.cuda.synchronize()
+        #LOGGING — SINGLE run.log PER STEP (no commit=False, no explicit step -> wandb auto _step)
+        loss_train=loss.item()
+
         f_time=time.time()
         tokens_seen+=cfg.BATCH_SIZE*cfg.EFF_SEQ_LEN
         step_time=round(f_time-s_time,4)
@@ -231,7 +246,6 @@ with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
         mfu=wl.compute_mfu(step_time,cfg.EFF_SEQ_LEN,cfg.BATCH_SIZE,num_non_embed_params,cfg.A6000_BF16_PEAK)
         token_throughput=(cfg.BATCH_SIZE*cfg.EFF_SEQ_LEN)/step_time
 
-        loss_train=loss.item()
         #RAW BIASED EMA CARRIES FORWARD; BIAS-CORRECT ONLY FOR LOGGING
         ema_loss=ema_loss*(1-alpha) + alpha*loss_train
         ema_token_throughput=ema_token_throughput*(1-alpha) + alpha*token_throughput
@@ -240,22 +254,22 @@ with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
         ema_throughput_log=ema_token_throughput/bias_corr
         data_io_frac=data_io_time/step_time
 
-        wl.log_step_metrics(run,global_step,loss=loss,grad_norm_muon=norm2d,grad_norm_adamw=norm1d,
-                            lr_adamw=wsd_scheduler_adam.get_last_lr()[0],
-                            lr_muon=wsd_scheduler_muon.get_last_lr()[0],
-                            tokens_seen=tokens_seen,throughput=token_throughput,
-                            step_time=step_time,data_io=data_io_frac,mfu=mfu)
-
-        run.log({"loss/ema_ce":ema_loss_log,"perf/ema_throughput":ema_throughput_log,
-                "loss/logsumexp_sq":logsumexp_avg},step=global_step,commit=False)
+        logs=wl.step_metrics(loss=loss,grad_norm_muon=norm2d,grad_norm_adamw=norm1d,
+                             lr_adamw=wsd_scheduler_adam.get_last_lr()[0],
+                             lr_muon=wsd_scheduler_muon.get_last_lr()[0],
+                             tokens_seen=tokens_seen,throughput=token_throughput,
+                             step_time=step_time,data_io=data_io_frac,mfu=mfu)
+        logs.update({"loss/ema_ce":ema_loss_log,"perf/ema_throughput":ema_throughput_log,
+                     "loss/logsumexp_sq":logsumexp_avg})
+        logs.update(act_stats)
 
         #GROUPED GRAD / PARAM / TRUE UPDATE-RATIO NORMS (grads were retained this step)
         if is_log_step:
-            wl.log_param_diagnostics(run,global_step,transformer_model,prev,cfg.DEVICE)
+            logs.update(wl.param_diagnostics(transformer_model,prev,cfg.DEVICE))
             transformer_model.zero_grad(set_to_none=True)   #NULL RETAINED GRADS -> NO ACCUMULATION NEXT STEP
             del prev
 
-        run.log({"data/shard_ids":shard_ids},step=global_step,commit=False)
-        wl.commit(run,global_step)
-
+        run.log(logs)   #ONE COMMIT PER STEP
+    torch.cuda.synchronize(cfg.DEVICE) 
+    torch.cuda.profiler.stop()
 

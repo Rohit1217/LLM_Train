@@ -5,7 +5,7 @@ from main_models import Transformer
 from Data.process_tiny_shakespeare import load_text, build_vocab
 
 cfg = Config()
-device = cfg.DEVICE
+device = "cuda:5"
 
 # ---- vocab (same deterministic char vocab used in training) ----
 text = load_text()
@@ -23,7 +23,7 @@ def decode(ids):
     return "".join(itos.get(int(i), "") for i in ids)
 
 
-def load_model(weights="model_weights.pth"):
+def load_model(weights="Weights/model_weights.pth"):
     # MTP heads are train-only: the main next-token head is just trunk + rms_out and is NOT
     # touched by the MTP loop, so we build the TRUNK ALONE -> identical main-head output, faster
     # generation (no MTP block per token), and generate() pads by 1 (num_mtp_heads=0).

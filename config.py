@@ -3,11 +3,11 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
-    BATCH_SIZE:int = 20
+    BATCH_SIZE:int = 18
     SEQ_LEN:int = 1024
 
     D_MODEL:int = 1536
-    VOCAB_SIZE:int = 48000
+    VOCAB_SIZE:int = 288
     MAX_CONTEXT:int = 8192
     MAX_FREQ:int = 10000
     N_HEAD:int = 12
@@ -20,6 +20,8 @@ class Config:
     NUM_GROUPS:int=4
     MTP_HEADS:int=2
     MTP_LOSS_WEIGHT:float=0.3
+
+    GRAD_CHECKPOINT_EVERY:int=0 
 
     WEIGHT_DECAY:float=0.1
     LR:float=2e-4

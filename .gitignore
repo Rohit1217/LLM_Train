@@ -14,6 +14,7 @@ resreve.bin
 
 #weights
 *.pth
+Weights
 
 # Profiling / debug artifacts
 *.nsys-rep
@@ -24,3 +25,7 @@ triton_kernels*.py
 
 # wandb
 wandb/
+
+#Download scripts
+ *download*.py
+*raw_corpus*

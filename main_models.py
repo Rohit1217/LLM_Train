@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.attention import SDPBackend, sdpa_kernel
+from torch.utils.checkpoint import checkpoint
 
 #LINEAR WITH HE INITALIZATION
 class linear_swig(nn.Module):
@@ -216,8 +217,10 @@ class mtp_head(nn.Module):
 
 #TRANSFORMER WITH ALL THE BLOCKS BUILT EARLIER
 class Transformer(nn.Module):
-    def __init__(self,vocab_size,max_context,max_freq,d_model,n_heads,num_layers,attn_dropout,ffn_hidden_dim,ffn_dropout,mtp_heads=None,gqa_groups=0):
+    def __init__(self,vocab_size,max_context,max_freq,d_model,n_heads,num_layers,attn_dropout,ffn_hidden_dim,ffn_dropout,mtp_heads=None,gqa_groups=0,grad_checkpoint_every=0):
         super().__init__()
+
+        self.grad_checkpoint_every=grad_checkpoint_every  #0=off; else checkpoint every Nth trunk block (recompute its activations in backward to save memory)
 
         self.embedding = nn.Embedding(vocab_size, d_model)
         nn.init.normal_(self.embedding.weight, mean=0.0, std=d_model**(-0.5)) #N(0,1/sqrt(d)) init so output norm is 1
@@ -226,15 +229,16 @@ class Transformer(nn.Module):
                                                                      ffn_hidden_dim,ffn_dropout,gqa_groups) for idx in range(num_layers)])
         self.rms_out=rms_norm(d_model)
         
+        if mtp_heads:
+            self.mtp_heads_list=nn.ModuleList([mtp_head(d_model,n_heads,num_layers,attn_dropout,
+                                                        ffn_hidden_dim,ffn_dropout,gqa_groups) for idx in range(mtp_heads)])
+        else:
+            self.mtp_heads_list=[]        
+
         head_dim=d_model//n_heads
         self.d_model=d_model
         self.num_mtp_heads=len(self.mtp_heads_list)
 
-        if mtp_heads:
-            self.mtp_heads_list=nn.ModuleList([mtp_head(d_model,n_heads,num_layers,attn_dropout,
-                                                          ffn_hidden_dim,ffn_dropout,gqa_groups) for idx in range(mtp_heads)])
-        else:
-            self.mtp_heads_list=[]
         # perm,alt_bit=permute_indcies_rope(head_dim)
         cos,sin=precompute_rope_fast(max_context,max_freq,head_dim)
         mask=torch.triu(torch.ones(max_context,max_context),diagonal=1).bool()
@@ -253,9 +257,14 @@ class Transformer(nn.Module):
 
         x=x_embed[:,:L,:].contiguous() 
 
-        #MAIN  BLOCK
+        #MAIN  BLOCK  (checkpoint every Nth block: re-runs its fwd in backward, frees its stored activations.
+        # use_reentrant=False is the modern variant + the one torch.compile traces as a recompute HOP)
         for i,trans_block in enumerate(self.transformer_block_list):
-            x=trans_block(x,self.mask[:L,:L],self.cos[:L],self.sin[:L])
+            if self.grad_checkpoint_every and i % self.grad_checkpoint_every == 0:
+                x=checkpoint(trans_block,x,self.mask[:L,:L],self.cos[:L],self.sin[:L],
+                             use_reentrant=False,preserve_rng_state=False)
+            else:
+                x=trans_block(x,self.mask[:L,:L],self.cos[:L],self.sin[:L])
         
         x=self.rms_out(x)
         prev_h_rms=x

@@ -44,10 +44,10 @@ def compute_mfu(step_time, seq_len, batch_size, num_params, peak_flops):
     return (6 * batch_size * seq_len * num_params) / (peak_flops * step_time)
 
 
-#PER-STEP SCALARS (loss / perf / lr / per-group grad norm)
-def log_step_metrics(run, step, *, loss, grad_norm_muon, grad_norm_adamw, lr_adamw, lr_muon,
-                     tokens_seen, throughput, step_time, data_io, mfu):
-    run.log({
+#PER-STEP SCALARS (loss / perf / lr / per-group grad norm) -> RETURNS dict for a single run.log
+def step_metrics(*, loss, grad_norm_muon, grad_norm_adamw, lr_adamw, lr_muon,
+                 tokens_seen, throughput, step_time, data_io, mfu):
+    return {
         "perf/tokens_seen": tokens_seen,
         "loss/ce_loss": loss,
         "loss/perplexity": torch.exp(loss + 1e-9),
@@ -59,17 +59,17 @@ def log_step_metrics(run, step, *, loss, grad_norm_muon, grad_norm_adamw, lr_ada
         "perf/step_time": step_time,
         "perf/data_io": data_io,
         "perf/MFU": mfu,
-    }, step=step, commit=False)
+    }
 
 
-#ACTIVATION DIAGNOSTICS — eager forward, hooks attached only here (never touch compiled path)
-def log_activations(run, step, model, x):
-    act_norm, act_max, handles = {}, {}, []
+#ACTIVATION DIAGNOSTICS — eager forward, hooks attached only here (never touch compiled path) -> RETURNS dict
+def activation_stats(model, x):
+    stats, handles = {}, []
     for i, b in enumerate(model.transformer_block_list):
         def make(i):
             def hook(m, inp, out):
-                act_norm[f"res_norm/block_{i}"] = out.norm(dim=-1).mean().item()
-                act_max[f"res_max/block_{i}"] = out.abs().max().item()
+                stats[f"res_norm/block_{i}"] = out.norm(dim=-1).mean().item()
+                stats[f"res_max/block_{i}"] = out.abs().max().item()
             return hook
         handles.append(b.register_forward_hook(make(i)))
 
@@ -77,7 +77,7 @@ def log_activations(run, step, model, x):
         model(x)
     for h in handles:
         h.remove()
-    run.log({**act_norm, **act_max}, step=step, commit=False)
+    return stats
 
 
 #PARAM-GROUP DIAGNOSTICS — grad / param / true update-ratio norms
@@ -94,7 +94,7 @@ def _group_of(n):
     return "other"
 
 
-def log_param_diagnostics(run, step, model, prev, device):
+def param_diagnostics(model, prev, device):
     z = lambda: defaultdict(lambda: torch.zeros((), device=device))
     gn, pn, un = z(), z(), z()
     for n, p in model.named_parameters():
@@ -110,9 +110,4 @@ def log_param_diagnostics(run, step, model, prev, device):
         diag[f"grad_norm/{g}"] = gn[g].sqrt().item()
         diag[f"param_norm/{g}"] = pnorm
         diag[f"upd_ratio/{g}"] = un[g].sqrt().item() / (pnorm + 1e-12)
-    run.log(diag, step=step, commit=False)
-
-
-#FLUSH all commit=False logs accumulated for this step
-def commit(run, step):
-    run.log({}, step=step)
+    return diag
