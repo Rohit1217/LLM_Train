@@ -29,3 +29,4 @@ wandb/
 #Download scripts
  *download*.py
 *raw_corpus*
+download_math_stack.py
