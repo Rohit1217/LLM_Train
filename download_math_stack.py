@@ -75,25 +75,23 @@ def polite_extractor(dataset_id, subset, target_chars, base_name):
 # =====================================================================
 
 # All languages come from The Stack v1 (dedup): it embeds `content` inline, so
-# it needs only an HF login (no AWS). The directory name must match the repo
-# exactly -- note C++ lives under data/c++, not data/cpp.
+# it needs only an HF login (no AWS). Directory names must match the repo
+# exactly -- in the-stack-dedup C++ is under data/cpp (the non-dedup repo
+# uses data/c++ instead).
 STACK_DATASET = "bigcode/the-stack-dedup"
 stack_languages = [
-    {"lang": "python", "chars": int(STACK_CHAR_TARGET * 0.60)},
-    {"lang": "c++",    "chars": int(STACK_CHAR_TARGET * 0.20)},
+    # {"lang": "python", "chars": int(STACK_CHAR_TARGET * 0.60)},
+    {"lang": "cpp",    "chars": int(STACK_CHAR_TARGET * 0.20)},
     {"lang": "tex",    "chars": int(STACK_CHAR_TARGET * 0.15)},
     {"lang": "sql",    "chars": int(STACK_CHAR_TARGET * 0.05)},
 ]
 
 for config in stack_languages:
-    # Sanitize the language for the output filename (c++ -> cpp).
-    safe_name = config["lang"].replace("+", "p")
-
     polite_extractor(
         dataset_id=STACK_DATASET,
         subset=config["lang"],
         target_chars=config["chars"],
-        base_name=f"stack_v1_{safe_name}",
+        base_name=f"stack_v1_{config['lang']}",
     )
 
 print("\nAll targeted data subsets successfully saved!")

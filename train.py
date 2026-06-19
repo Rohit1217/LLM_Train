@@ -31,7 +31,7 @@ cfg=Config()
 torch.manual_seed(cfg.SEED)
 
 #MODEL
-run_id="Run_overfit-1-mtp_mp_small"
+run_id="Run_overfit-1-mtp_mp_gqa_small_test"
 run = wandb.init(
     entity="rohit_iisc-indian-institute-of-science",
     project="llm_overfit",
@@ -47,7 +47,7 @@ transformer_model=Transformer(vocab_size=cfg.VOCAB_SIZE,max_context=cfg.MAX_CONT
                               max_freq=cfg.MAX_FREQ,d_model=cfg.D_MODEL,n_heads=cfg.N_HEAD,
                               num_layers=cfg.NUM_LAYERS,attn_dropout=cfg.ATT_DROPOUT,
                               ffn_hidden_dim=cfg.FFN_HIDDEN_DIM,ffn_dropout=cfg.FFN_DROPOUT,mtp_heads=cfg.MTP_HEADS,
-                              grad_checkpoint_every=cfg.GRAD_CHECKPOINT_EVERY)
+                              grad_checkpoint_every=cfg.GRAD_CHECKPOINT_EVERY,gqa_groups=cfg.NUM_GROUPS)
 
 transformer_model=transformer_model.to(cfg.DEVICE)
 
@@ -58,7 +58,8 @@ num_non_embed_params=num_params-cfg.VOCAB_SIZE*cfg.D_MODEL
 wl.log_run_config(run,model=transformer_model,cfg=cfg,
                   num_params=num_params,num_non_embed_params=num_non_embed_params)
 
-# #PARAM SEPERATION FOR MUON AND ADAMW
+
+# PARAM SEPERATION FOR MUON AND ADAMW
 # param_2d=[p for n,p in transformer_model.named_parameters() if p.ndim==2 and "embed" not in n]
 # param_1d_embed=[p for n,p in transformer_model.named_parameters() if p.ndim==1 or "embed" in n]
     
@@ -139,7 +140,7 @@ optimized_model=torch.compile(transformer_model,mode="max-autotune-no-cudagraphs
 tokens_seen=0
 data_iter=cycle(dataloader)
 
-LOG_EVERY=2000
+LOG_EVERY=10
 ema_loss=0
 ema_token_throughput=0
 alpha=0.05
@@ -148,6 +149,16 @@ alpha=0.05
 def save_model(model):
     torch.save(model.state_dict(), "Weights/model_weights.pth")
 
+def save_training_checkpoint(master_params, optimizer, step, path="Weights/checkpoint.pt"):
+    checkpoint = {
+        'step': step,
+        # Save the real FP32 tensors directly from your custom master param list
+        'master_1d': [p.data.cpu() for p in master_param_1d], 
+        'master_2d':[p.data.cpu() for p in master_param_2d],
+        'optimizer_muon_state_dict': muon_optim_fp32.state_dict(),
+        'optimizer_adam_state_dict':adamw_optim_fp32.state_dict()
+    }
+    torch.save(checkpoint, path)
 
 
 @torch.no_grad()   #IN-PLACE COPY INTO bf16 LEAF PARAMS + OPTIM STEP MUST RUN OUTSIDE AUTOGRAD
@@ -193,7 +204,6 @@ def mp_opt_step(muon_optim,master_param_2d,master_param_1d,bf16_param_2d,
 
 
 with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
-    
 
     for global_step in tqdm(range(cfg.TOTAL_STEPS)):
         if global_step>5:

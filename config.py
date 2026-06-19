@@ -26,7 +26,7 @@ class Config:
     WEIGHT_DECAY:float=0.1
     LR:float=2e-4
 
-    DEVICE:str = "cuda:6"
+    DEVICE:str = "cuda:3"
     SEED:int = 133721
 
     TOTAL_TOKENS:int = 10**8
