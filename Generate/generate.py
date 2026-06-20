@@ -1,6 +1,6 @@
 import os
 
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 import torch
 
@@ -9,10 +9,8 @@ from main_models import Transformer
 from Data.process_tiny_shakespeare import load_text, build_vocab
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
-
 cfg = Config()
 device = "cuda:3"
-
 
 SMALL_NUM_LAYERS=8
 SMALL_MTP_HEADS=2
@@ -33,7 +31,6 @@ LARGE_HEAD_DIM=LARGE_D_MODEL//LARGE_N_HEAD
 LARGE_KVN_HEADS=LARGE_N_HEAD//LARGE_N_GROUPS
 
 
-# ---- vocab (same deterministic char vocab used in training) ----
 text = load_text()
 chars, stoi, itos = build_vocab(text)
 
@@ -48,9 +45,6 @@ def decode(ids):
     return "".join(itos.get(int(i), "") for i in ids)
 
 def load_model(weights="Weights/model_weights.pth"):
-    # MTP heads are train-only: the main next-token head is just trunk + rms_out and is NOT
-    # touched by the MTP loop, so we build the TRUNK ALONE -> identical main-head output, faster
-    # generation (no MTP block per token), and generate() pads by 1 (num_mtp_heads=0).
 
     model=Transformer(vocab_size=cfg.VOCAB_SIZE,max_context=cfg.MAX_CONTEXT,
                                 max_freq=cfg.MAX_FREQ,d_model=cfg.D_MODEL,n_heads=cfg.N_HEAD,
@@ -84,7 +78,7 @@ def sample(model,prompt="ROMEO",temperature=1.0,n_new=200,type="LARGE"):
         k[:,:,:,:next_pos,:]=k_pref
         v[:,:,:,:next_pos,:]=v_pref
 
-        for i in range(n_new):
+        while next_pos<(n_new+k_pref.shape[3]):
             new_out=model.decode_inference(out[-1],k,v,next_pos,temperature)
             out=torch.cat([out,new_out])
             next_pos+=new_out.shape[0]
@@ -92,13 +86,6 @@ def sample(model,prompt="ROMEO",temperature=1.0,n_new=200,type="LARGE"):
         
         # print(out.shape,out)
         return decode(out.squeeze())    
-
-
-
-# def sample(model, prompt="ROMEO:", n_new=200, temperature=1.0):
-#     x = encode_prompt(prompt)
-#     out = model.generate(x, n_new, temperature=temperature)
-#     return decode(out[0])
 
 
 if __name__ == "__main__":

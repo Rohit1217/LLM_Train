@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 
 # --- TARGET LIMITS (Tokens converted to character estimates via * 4) ---
 FINEMATH_CHAR_TARGET = 5_000_000_000 * 4  # 20 Billion chars
-STACK_CHAR_TARGET = 3_000_000_000 * 4     # 12 Billion chars
+STACK_CHAR_TARGET = 10_000_000_000 * 4     # 40 Billion chars will dedup
 
 OUTPUT_DIR = "./raw_corpus_optimized"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -80,7 +80,7 @@ def polite_extractor(dataset_id, subset, target_chars, base_name):
 # uses data/c++ instead).
 STACK_DATASET = "bigcode/the-stack-dedup"
 stack_languages = [
-    # {"lang": "python", "chars": int(STACK_CHAR_TARGET * 0.60)},
+    {"lang": "python", "chars": int(STACK_CHAR_TARGET * 0.60)},
     {"lang": "cpp",    "chars": int(STACK_CHAR_TARGET * 0.20)},
     {"lang": "tex",    "chars": int(STACK_CHAR_TARGET * 0.15)},
     {"lang": "sql",    "chars": int(STACK_CHAR_TARGET * 0.05)},

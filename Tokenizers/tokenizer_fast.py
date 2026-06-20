@@ -5,11 +5,10 @@ import regex as re
 import heapq
 from tqdm import tqdm
 import tiktoken
+import base64,pickle
 
-
-df=pd.read_parquet("../data/fineweb-edu-10BT/sample/10BT/000_00000.parquet")
-texts=df['text'].tolist()
-
+# df=pd.read_parquet("../data/fineweb-edu-10BT/sample/10BT/000_00000.parquet")
+# texts=df['text'].tolist()
 
 GPT2_SPLIT_PATTERN = r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 GPT4_SPLIT_PATTERN = r"""(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"""
@@ -154,9 +153,16 @@ arr=arr_from_tuples_rec( (((104, 101), 108), ((108, 111), 32)))
 bytes(arr),bytes([125])
 
 
-def build_vocab(texts,vocab_size=48000):
-    word_counts=get_word_counts(texts)
-    index_heap=Index_Heap(word_counts)    
+def build_vocab(texts,is_count=True,vocab_size=48000):
+    if is_count:
+        word_counts=texts
+    else:
+        word_counts=get_word_counts(texts)
+
+    print("BUILDING INDEX HEAP")
+    index_heap=Index_Heap(word_counts)   
+    print("INDEX HEAP BUILT") 
+    
     vocab={}
     del texts
 
@@ -183,8 +189,8 @@ class Tokenizer():
         self.encoding=None
         self.pat_str=O200_K_PATTERN
 
-    def train(self,texts):
-        self.vocab=build_vocab(texts,self.vocab_size)
+    def train(self,texts,is_count=False):
+        self.vocab=build_vocab(texts,is_count,self.vocab_size)
         self.encoding = tiktoken.Encoding(
             name="custom_encoding",
             pat_str=self.pat_str,
@@ -218,10 +224,45 @@ class Tokenizer():
         else:
             print("TRAIN THE TOKENIZER FIRST ")        
 
+    def save_tokenizer(self,path):
+        with open(path, "w") as f:
+            for tok, rank in sorted(self.vocab.items(), key=lambda kv: kv[1]):  
+                f.write(f"{base64.b64encode(tok).decode()} {rank}\n")
+    
+    def load_tokenizer(self,path):
+        mergeable_ranks = {}
+        with open(path) as f:
+            for line in f:
+                b64, rank = line.split()
+                mergeable_ranks[base64.b64decode(b64)] = int(rank)
+
+        self.vocab=mergeable_ranks
+        self.encoding = tiktoken.Encoding(
+            name="custom_encoding",
+            pat_str=self.pat_str,
+            mergeable_ranks=self.vocab,
+            special_tokens={
+                "<|endoftext|>": len(self.vocab),
+                "<|pad|>":       len(self.vocab)+1,
+                "<|unk|>":       len(self.vocab)+2,
+                "<think>":       len(self.vocab)+3,
+                "</think>":      len(self.vocab)+4,
+                "<|startofmath|>": len(self.vocab)+5,
+                "<|endofmath|>":   len(self.vocab)+6,
+                "<|box|>":         len(self.vocab)+7,
+                "<|system|>":      len(self.vocab)+8,
+                "<|user|>":        len(self.vocab)+9,
+                "<|assistant|>":   len(self.vocab)+10,
+            }
+        )
+        return
+    
 if __name__=="__main__":
-    print(len(texts))
+
     tokenizer=Tokenizer(48000)
-    tokenizer.train(texts[:100000])
+    word_counts = Counter(pickle.load(open("/home/rohit1/LLM_train/raw_corpus_optimized/count.pkl", "rb"))) 
+    tokenizer.train(word_counts,True)
+    tokenizer.save_tokenizer("tokenizer_vocab.titoken")
     
     text = "BIRTH OF THE TOKENIZATION GOD 123456 123"
     tokens = tokenizer.encode(text)

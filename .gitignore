@@ -30,3 +30,4 @@ wandb/
  *download*.py
 *raw_corpus*
 download_math_stack.py
+download_math_stack
