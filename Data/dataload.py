@@ -11,6 +11,7 @@ class chunks_dataset(Dataset):
         self.eot_id=eot_id
         self.rank=rank
         self.arr=None
+        self.mtp_k=None
 
     def warmup(self):
         if not self.arr:
@@ -26,26 +27,36 @@ class chunks_dataset(Dataset):
     def __getitem__(self,idx):
         if not self.arr:
             self.warmup()
-            
+
         s=self.rank*self.data_len*self.seq_len*self.batch_size + idx*(self.seq_len*self.batch_size)
         return np.asarray(self.arr[s:s+self.seq_len*self.batch_size])
 
 
     #SOME PREPROCESSING OFLOADED HERE AS DATALOADER PREPARE BATCHES WHILE GPU IS DOING COMPUTATION SO THERE IS OVERLAP OF BOTH SAVING US TIME.
-    def data_collate(self,data_arr):
-        eot_indicies=np.where(data_arr[:-1]==self.eot_id)[0]
+    def data_collate(self,x):
+        eot_indicies=np.where(x[:-1]==self.eot_id)[0]
         cuseq=np.zeros(eot_indicies.shape[0]+2)
-        cuseq[-1]=data_arr.shape[0]
+        cuseq[-1]=x.shape[0]
         idx=np.arange(eot_indicies.shape[0])
 
         cuseq[idx+1]=eot_indicies[idx]
         cumsum_rope=np.concatenate([np.arange(cuseq[i+1]-cuseq[i]) for i in range(len(cuseq)-1)]).astype(np.int16)
 
-        cumsum_rope,cuseq
+        y_main=torch.from_numpy(x[1:x.shape[0]-self.mtp_k])
 
-        return {"rope_pos":torch.from_numpy(cumsum_rope),
-                "cuseq":torch.from_numpy(cuseq.astype(np.int32)),
-                "tokens":torch.from_numpy(data_arr),
+        if self.mtp_k>0:
+            y_mtp=torch.from_numpy(x[2:])
+            y_mtp=y_mtp.unfold(0,self.mtp_k,1).permute(1,0).contiguous() 
+        else:
+            y_mtp=None
+
+        cumsum_rope,cuseq
+        
+        return {"rope_pos":torch.from_numpy(cumsum_rope).contiguous(),
+                "cuseq":torch.from_numpy(cuseq.astype(np.int32)).contiguous(),
+                "tokens":torch.from_numpy(x).contiguous(),
+                "y_main":y_main.contiguous(),
+                "y_mtp":y_mtp,
                 "seqlen":self.seq_len}
 
 
