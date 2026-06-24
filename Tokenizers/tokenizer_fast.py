@@ -212,7 +212,7 @@ class Tokenizer():
     
     def encode(self,text):
         if self.encoding:
-            tokens = self.encoding.encode(text)
+            tokens = self.encoding.encode(text,disallowed_special=())
             return tokens
         else:
             print("TRAIN THE TOKENIZER FIRST ")

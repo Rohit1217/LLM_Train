@@ -3,8 +3,9 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
-    BATCH_SIZE:int = 18
+    BATCH_SIZE:int = 12
     SEQ_LEN:int = 1024
+    WORLD_SIZE=4
 
     D_MODEL:int = 1536
     VOCAB_SIZE:int = 288
@@ -22,6 +23,7 @@ class Config:
     MTP_LOSS_WEIGHT:float=0.3
 
     GRAD_CHECKPOINT_EVERY:int=0 
+    ACCUMULATION_STEP:int=16
 
     WEIGHT_DECAY:float=0.1
     LR:float=2e-4
@@ -32,8 +34,7 @@ class Config:
     TOTAL_TOKENS:int = 10**8
     A6000_BF16_PEAK :float= 154e12
     THROUGHPUT_TARGET:float = 15805   # tok/s baseline
-    PEAK_MFU_TARGET:float = 0.56
-
+    PEAK_MFU_TARGET:float = 0.563
 
     def __post_init__(self):
         self.EFF_SEQ_LEN:int=self.SEQ_LEN+self.MTP_HEADS+1

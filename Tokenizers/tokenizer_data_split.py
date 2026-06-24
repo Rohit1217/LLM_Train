@@ -23,7 +23,6 @@ data_splits={"fineweb_edu1":{"tok_frac":0.50,"path":"../raw_corpus_optimized/fin
               "stack_tex":{"tok_frac":0.25*0.2,"path":"../raw_corpus_optimized/stack_tex_dedup.jsonl.zst" },
               "stack_sql":{"tok_frac":0.25*0.1,"path":"../raw_corpus_optimized/stack_sql_dedup.jsonl.zst" },}
 
-
 def convert_count(type,count):
     if type=="eng":
         return count//4

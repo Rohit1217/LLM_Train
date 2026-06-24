@@ -14,9 +14,9 @@ class sharded_dataset(Dataset):
         return self.shard_ids[idx], self.tokens[idx]
 
 
-def load_data(dataset, batch_size, shuffle=False):
+def load_data(dataset,sampler, batch_size, shuffle=False):
     tokens,shard_ids=dataset
     ds=sharded_dataset(tokens, shard_ids)
-    dataloader=DataLoader(ds, batch_size=batch_size, shuffle=shuffle,
+    dataloader=DataLoader(ds, batch_size=batch_size,sampler=sampler, shuffle=shuffle,
                             pin_memory=True, drop_last=True)
     return dataloader     

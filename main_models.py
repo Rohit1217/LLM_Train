@@ -100,6 +100,34 @@ def precompute_rope_fast(max_context,max_freq,head_dim): # USES OUTER PRODUCT TO
     return torch.cos(seq_pos_theta).repeat(1,2),torch.sin(seq_pos_theta).repeat(1,2)
 
 
+def apply_rope_varlen(x,pos,cos_embed,sin_embed):
+
+    BT,D=x.shape[0]
+    x_type=x.dtype
+    xf=x.to(torch.float32)
+    
+    new_pos=torch.ones(pos[-1]).long()
+    lengths=torch.diff(pos,prepend=torch.tensor([0]))
+    new_pos[pos[:-1]]-=lengths[:-1]
+    new_pos=torch.cumsum(new_pos,dim=0)-1
+
+    cos,sin=cos_embed[new_pos,:],sin_embed[new_pos,:]
+    cos,sin=cos.unsqueeze(1),sin.unsqueeze(1)
+
+    return (xf*cos + rotate_half(xf)*sin).to(x_type)
+
+
+def apply_rope_varlen2(x,pos,cos_embed,sin_embed):
+
+    BT,D=x.shape[0]
+    x_type=x.dtype
+    xf=x.to(torch.float32)
+    cos,sin=cos_embed[pos,:],sin_embed[pos,:]
+    cos,sin=cos.unsqueeze(1),sin.unsqueeze(1)
+
+    return (xf*cos + rotate_half(xf)*sin).to(x_type)
+
+
 def apply_rope(x,cos_embed,sin_embed): #EITHER COMPUTE ROPE ONCE FOR MAX CONTEXT OR COMPUTE FOR EACH CONTEXT LENGTH PER BATCH CHOICE 
     T=x.shape[-2]
     cos,sin=cos_embed[:T,:],sin_embed[:T,:]
@@ -180,6 +208,8 @@ class Transformer_block(nn.Module):
         residual=x
         x=self.ffn(self.rms_norm_ffn(x)) +residual
         return x,k,v
+
+
 
 class gqa(nn.Module):
     def __init__(self,d_model,n_heads,num_layers,attn_dropout,groups):
