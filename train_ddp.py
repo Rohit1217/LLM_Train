@@ -243,7 +243,7 @@ def train():
     tokens_seen=0
     data_iter=cycle(dataloader)
 
-    LOG_EVERY=10
+    LOG_EVERY=1024
     ema_loss=0
     ema_token_throughput=0
     alpha=0.05
