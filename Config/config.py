@@ -22,6 +22,7 @@ class Config:
     MTP_LOSS_WEIGHT:float=0.3
 
     GRAD_CHECKPOINT_EVERY:int=0 
+    ACCUMULATION_STEP:int=16
 
     WEIGHT_DECAY:float=0.1
     LR:float=2e-4
@@ -42,3 +43,4 @@ class Config:
         self.WARMUP_STEPS = int(0.05*self.TOTAL_STEPS)
         self.STABLE_STEPS = int(0.85*self.TOTAL_STEPS)
         self.DECAY_STEPS = int(0.10*self.TOTAL_STEPS)
+

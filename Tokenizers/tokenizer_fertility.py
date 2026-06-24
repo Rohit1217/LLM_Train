@@ -4,6 +4,10 @@ from tokenizer_fast import Tokenizer
 tokenizer = Tokenizer(48000)
 tokenizer.load_tokenizer("tokenizer_vocab.titoken")
 
+import tiktoken
+o200k = tiktoken.get_encoding("o200k_base")        
+from transformers import AutoTokenizer
+tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
 # word splitter for the denominator (whitespace words; \p{L}+ if you prefer)
 _WORD = regex.compile(r"\S+")
 

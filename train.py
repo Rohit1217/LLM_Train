@@ -228,7 +228,6 @@ with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
             run.log({"data/shard_ids":shard_ids},step=global_step,commit=False)
 
             
-
         #MP OPTIMIZER STEP (eager + foreach): cast grads->fp32 master, clip, step, copy back
         norm2d,norm1d=mp_opt_step(muon_optim=muon_optim_fp32,master_param_2d=master_param_2d,master_param_1d=master_param_1d,
                           bf16_param_1d=bf16_param_1d,bf16_param_2d=bf16_param_2d,adamw_optim=adamw_optim_fp32,

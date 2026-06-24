@@ -40,8 +40,8 @@ def log_run_config(run, *, model, cfg, num_params, num_non_embed_params):
     })
 
 
-def compute_mfu(step_time, seq_len, batch_size, num_params, peak_flops):
-    return (6 * batch_size * seq_len * num_params) / (peak_flops * step_time)
+def compute_mfu(step_time, seq_len, batch_size,accumulation_step, num_params, peak_flops):
+    return (6 * batch_size * seq_len * accumulation_step * num_params) / (peak_flops * step_time)
 
 
 #PER-STEP SCALARS (loss / perf / lr / per-group grad norm) -> RETURNS dict for a single run.log
@@ -86,7 +86,7 @@ def snapshot_params(model):
 
 def _group_of(n):
     if "embed" in n:                       return "embed"
-    if "qkv" in n:                         return "attn_qkv"
+    if "q_proj" in n or "kv_proj" in n or "qkv" in n: return "attn_qkv"    
     if "att" in n and "linear_proj" in n:  return "attn_out"
     if "swig" in n:                        return "ffn_in"
     if "fc" in n:                          return "ffn_out"

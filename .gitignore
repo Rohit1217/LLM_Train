@@ -26,6 +26,8 @@ triton_kernels*.py
 # wandb
 wandb/
 
+env_backup_llm.txt
+
 #Download scripts
  *download*.py
 *raw_corpus*
