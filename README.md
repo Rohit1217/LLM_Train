@@ -7,7 +7,7 @@ model, custom attention kernels, training loop, and generation.
 I wrote most of the non-trivial parts myself to understand them end to end,
 rather than pulling in a framework.
 
-Runs / loss curves: [Run link]("https://wandb.ai/rohit_iisc-indian-institute-of-science/llm_overfit/workspace?nw=nwuserrohit_iisc")
+Runs / loss curves: [wandb](https://wandb.ai/rohit_iisc-indian-institute-of-science/llm_overfit/workspace?nw=nwuserrohit_iisc)
 
 ## What's in here
 
@@ -41,6 +41,21 @@ Decoder-only transformer.
 | MTP heads | 2 |
 
 Config lives in `Config/config.py`.
+
+## Data
+
+Target is ~20B tokens, which is roughly Chinchilla-optimal for a 1B model
+(about 20 tokens per parameter). The corpus is a filtered, deduplicated mix
+of code and math (subsets of The Stack — Python, C++, TeX, SQL — plus math),
+so this is a base model biased toward code/math rather than general web text.
+
+The tokenizer is a custom BPE (48k vocab) I trained on this corpus instead of
+reusing an off-the-shelf one, so the vocabulary actually fits the code/math
+distribution (see `Tokenizers/`). Data prep lives in `Data/`: StarCoder-style
+quality filtering, exact-dup removal (SHA-256 over whitespace-normalized text),
+then packing whole documents into fixed 1024-token sequences with an EOT
+separator. At train time the intra-document attention mask keeps attention and
+RoPE positions from leaking across document boundaries within a packed sequence.
 
 ## Setup
 
@@ -86,6 +101,25 @@ Work in progress. At this scale the model learns fluent text and basic facts;
 it is a base model with no instruction tuning, so MMLU sits near chance and
 GSM8K near zero. Next steps: finish the token budget, then SFT + GRPO for
 math/reasoning.
+
+## Things worth a look
+
+If you're reading the code, these are the parts that took the most thought:
+
+- **Intra-document attention kernels** (`Intradoc_kernels/`) — hand-written
+  Triton forward and backward, with GQA and RoPE positions that reset per
+  document, so packing many short docs into one sequence stays correct.
+- **World-size-agnostic training** (`Config/config.py`, `Data/dataload.py`) —
+  gradient accumulation auto-scales with the number of GPUs so the global
+  batch is constant. The LR schedule and the exact data order come out
+  identical whether you launch on 2 GPUs or 8, and a run resumes from the
+  exact micro-batch even if the GPU count changed between runs.
+- **Fault-tolerant checkpointing** (`load_save_ckpt.py`) — checkpoints are
+  written from a background thread so a slow or stuck NFS mount can't freeze
+  the GPUs, and resume falls back through checkpoint history if the latest
+  file is bad.
+- **Optimizer split** (`train_ddp.py`) — Muon on 2D weight matrices, AdamW on
+  everything else, with fp32 master weights alongside the bf16 model.
 
 ## Layout
 
