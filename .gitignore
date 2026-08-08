@@ -33,3 +33,11 @@ env_backup_llm.txt
 *raw_corpus*
 download_math_stack.py
 download_math_stack
+
+# checkpoints (7.3GB each) + pickles — Weights/ already covers the dir, these are belt-and-suspenders
+*.pt
+*.pkl
+
+# more profiler dumps + per-run debug logs
+*.qdstrm
+Debug_logs/

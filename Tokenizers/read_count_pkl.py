@@ -14,16 +14,3 @@ print("Token IDs:", tokens)
 decoded_text = tokenizer.decode(tokens)
 print("Decoded Text:", decoded_text)
 print(tokenizer.encoding._special_tokens["<|endoftext|>"],tokenizer.vocab_size)
-
-
-
-
-# word_counts = Counter(pickle.load(open("/home/rohit1/LLM_train/raw_corpus_optimized/count.pkl", "rb")))
-
-# word_counts_desc = dict(sorted(word_counts.items(), key=itemgetter(1), reverse=True))
-# count=0
-# for word,countw in word_counts_desc.items():
-#     if count>100:
-#         break
-#     print(word,countw)
-#     count+=1

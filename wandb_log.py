@@ -2,7 +2,6 @@ import subprocess
 import torch
 from collections import defaultdict
 
-
 def _git_commit():
     try:
         return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"],
@@ -63,7 +62,7 @@ def step_metrics(*, loss, grad_norm_muon, grad_norm_adamw, lr_adamw, lr_muon,
 
 
 #ACTIVATION DIAGNOSTICS — eager forward, hooks attached only here (never touch compiled path) -> RETURNS dict
-def activation_stats(model, x):
+def activation_stats(model, x,cuseq=None,token_pos=None):
     stats, handles = {}, []
     for i, b in enumerate(model.transformer_block_list):
         def make(i):
@@ -74,7 +73,7 @@ def activation_stats(model, x):
         handles.append(b.register_forward_hook(make(i)))
 
     with torch.no_grad():
-        model(x)
+        model(x,cuseq,token_pos)
     for h in handles:
         h.remove()
     return stats

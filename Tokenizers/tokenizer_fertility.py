@@ -1,3 +1,4 @@
+
 import io, json, regex, numpy as np, pandas as pd, zstandard as zstd
 from tokenizer_fast import Tokenizer
 
@@ -8,7 +9,6 @@ import tiktoken
 o200k = tiktoken.get_encoding("o200k_base")        
 from transformers import AutoTokenizer
 tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
-# word splitter for the denominator (whitespace words; \p{L}+ if you prefer)
 _WORD = regex.compile(r"\S+")
 
 eval_splits = {
@@ -25,7 +25,6 @@ eval_splits = {
 def iter_heldout(split, skip_docs, max_docs):
     """Yield text from documents AFTER skip_docs (held-out region), up to max_docs."""
     if split["kind"] == "parquet":
-        # use dedicated held-out parquet files the tokenizer never saw
         for i in split["heldout_files"]:
             df = pd.read_parquet(split["path"].format(i=i), columns=["text"])
             for t in df["text"]:

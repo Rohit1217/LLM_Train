@@ -30,12 +30,11 @@ class Config:
     WEIGHT_DECAY:float=0.1
     LR:float=2e-4
 
-    DEVICE:str = "cuda:0"
+    DEVICE:str = "cuda:4"
     SEED:int = 133721
-    RUN_NAME:str = os.environ.get("RUN_NAME", "llm_mtp_intradoc_main")
-    DATA_DIR:str = os.environ.get("LLM_DATA_DIR", "raw_corpus_optimized")
-    OVERFIT_FILE_PATH:str = os.path.join(DATA_DIR, "overfit_10k_sequences.bin")
-    MAIN_FILE_PATH:str = os.path.join(DATA_DIR, "tokens.bin")
+    RUN_NAME:str="Run_overfit-4-mtp_mp_gqa_ddp_intradoc_main_neww"
+    OVERFIT_FILE_PATH="/home/rohit1/LLM_train/raw_corpus_optimized/overfit_10k_sequences.bin"
+    MAIN_FILE_PATH="/home/rohit1/LLM_train/raw_corpus_optimized/tokens.bin"
 
     WANDB_OFFLINE:bool = False             
     RUN_ACT_STATS:bool = False            
