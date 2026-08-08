@@ -102,25 +102,6 @@ it is a base model with no instruction tuning, so MMLU sits near chance and
 GSM8K near zero. Next steps: finish the token budget, then SFT + GRPO for
 math/reasoning.
 
-## Things worth a look
-
-If you're reading the code, these are the parts that took the most thought:
-
-- **Intra-document attention kernels** (`Intradoc_kernels/`) — hand-written
-  Triton forward and backward, with GQA and RoPE positions that reset per
-  document, so packing many short docs into one sequence stays correct.
-- **World-size-agnostic training** (`Config/config.py`, `Data/dataload.py`) —
-  gradient accumulation auto-scales with the number of GPUs so the global
-  batch is constant. The LR schedule and the exact data order come out
-  identical whether you launch on 2 GPUs or 8, and a run resumes from the
-  exact micro-batch even if the GPU count changed between runs.
-- **Fault-tolerant checkpointing** (`load_save_ckpt.py`) — checkpoints are
-  written from a background thread so a slow or stuck NFS mount can't freeze
-  the GPUs, and resume falls back through checkpoint history if the latest
-  file is bad.
-- **Optimizer split** (`train_ddp.py`) — Muon on 2D weight matrices, AdamW on
-  everything else, with fp32 master weights alongside the bf16 model.
-
 ## Layout
 
 ```
