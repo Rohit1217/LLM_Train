@@ -7,7 +7,7 @@ model, custom attention kernels, training loop, and generation.
 I wrote most of the non-trivial parts myself to understand them end to end,
 rather than pulling in a framework.
 
-Runs / loss curves: [wandb](https://wandb.ai/rohit_iisc-indian-institute-of-science/llm_overfit/workspace?nw=nwuserrohit_iisc)
+Runs / loss curves: [wandb_logs](https://wandb.ai/rohit_iisc-indian-institute-of-science/LLM_train?nw=nwuserrohit_iisc)
 
 ## What's in here
 
