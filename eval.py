@@ -1,5 +1,5 @@
 """
-Cheap out-of-band eval harness: MMLU + GSM8K + held-out validation loss.
+Cheap out-of-band eval harness: MMLU + GSM8K + HellaSwag + ARC-Easy + held-out validation loss.
 
 Runs SEPARATELY from training (its own process, one spare GPU) so it never touches the
 training hot path. Loads a checkpoint (fp32 masters saved by train_ddp.save_training_checkpoint),
@@ -7,6 +7,8 @@ rebuilds the model, evaluates, and logs to wandb. Can run once (--ckpt) or poll 
 
 NOTE on scale: at ~875M params / base (no SFT), expect MMLU ~random (25%) and GSM8K low.
 The harness is here so you can track those as the model/data grows; val-loss is your real signal.
+HellaSwag / ARC-Easy (zero-shot, lm-eval-harness formatting, FULL splits) move at this scale:
+step 16800 scored HellaSwag acc_norm 0.419, ARC-Easy acc 0.630. Both run packed (~2.5 min total on an A6000).
 
 Usage:
   # one checkpoint:
@@ -180,10 +182,87 @@ def eval_gsm8k(model, tok, device, n, max_new=256):
     print(f"[gsm8k] acc {acc:.3f} ({total} q)")
     return {"gsm8k/acc": acc}
 
+# ---------------- HellaSwag / ARC-Easy (multiple-choice loglikelihood, packed) ----------------
+@torch.no_grad()
+def packed_loglikelihood(model, reqs, device, row_tokens=8192):
+    """reqs: list of (ctx_ids, cont_ids). Returns summed log P(cont | ctx) per req.
+    PACKED: many short sequences share one row, separated by cuseq boundaries with per-doc token_pos,
+    so one forward scores ~100 sequences (B=1 one-seq-per-forward is launch-bound: ~31 ms/seq regardless of length).
+    Only the continuation positions go through the vocab projection."""
+    pad = cfg.MTP_HEADS + 1                          # model drops mtp+1 tail tokens -> pad once at the end of the row
+    W = model.embedding.weight.float().t()
+    scores = [0.0] * len(reqs); i = 0
+    while i < len(reqs):
+        ids, bounds, pos, tgt_pos, tgt_tok, owner = [], [0], [], [], [], []
+        while i < len(reqs):
+            c, t = reqs[i]; L = len(c) + len(t)
+            if ids and len(ids) + L > row_tokens - pad: break
+            base = len(ids)
+            ids += c + t; bounds.append(len(ids)); pos += list(range(L))
+            for j, tt in enumerate(t):
+                tgt_pos.append(base + len(c) + j - 1); tgt_tok.append(tt); owner.append(i)   # row p predicts token p+1
+            i += 1
+        x = torch.tensor(ids + [EOT] * pad, dtype=torch.long, device=device).unsqueeze(0)
+        hidden = model(x, torch.tensor(bounds, dtype=torch.int32, device=device),
+                       torch.tensor(pos, dtype=torch.long, device=device))[0]                 # main head (S, D)
+        logp = torch.log_softmax(hidden[torch.tensor(tgt_pos, device=device)].float() @ W, dim=-1)
+        ll = logp.gather(1, torch.tensor(tgt_tok, device=device).unsqueeze(1)).squeeze(1)
+        per = torch.zeros(len(reqs), device=device)
+        per.index_add_(0, torch.tensor(owner, device=device), ll)
+        own = sorted(set(owner))
+        for k, v in zip(own, per[own].tolist()): scores[k] = v
+    return scores
+
+def _mc_request(tok, ctx, cont):
+    """encode ctx+cont jointly then split, so BPE merges at the boundary match the scored text (lm-eval style)"""
+    whole = tok.encode(ctx + cont); c = tok.encode(ctx)
+    return (c, whole[len(c):])
+
+def _eval_mc(model, tok, device, name, items):
+    """items: list of (ctx, [continuations], gold_idx). acc = argmax summed logprob; acc_norm = per-byte normalized."""
+    reqs = [_mc_request(tok, ctx, c) for ctx, conts, _ in items for c in conts]
+    scores = packed_loglikelihood(model, reqs, device)
+    acc = acc_norm = 0; k = 0
+    for ctx, conts, gold in items:
+        ll = np.array(scores[k:k + len(conts)]); k += len(conts)
+        nbytes = np.array([len(c.encode("utf-8")) for c in conts], dtype=float)
+        acc += int(ll.argmax() == gold); acc_norm += int((ll / nbytes).argmax() == gold)
+    n = max(len(items), 1)
+    print(f"[{name}] acc {acc/n:.3f}  acc_norm {acc_norm/n:.3f}  ({len(items)} q, stderr ~{np.sqrt(0.25/n):.3f})")
+    return {f"{name}/acc": acc / n, f"{name}/acc_norm": acc_norm / n}
+
+def _hs_pre(text):
+    text = text.strip().replace(" [title]", ". ")
+    text = re.sub("\\[.*?\\]", "", text)
+    return text.replace("  ", " ")
+
+@torch.no_grad()
+def eval_hellaswag(model, tok, device, n):
+    """zero-shot, validation split (test labels are hidden). headline metric: acc_norm."""
+    from datasets import load_dataset
+    ds = load_dataset("Rowan/hellaswag", split="validation")
+    if n > 0: ds = ds.select(range(min(n, len(ds))))
+    items = [(_hs_pre(d["activity_label"] + ": " + d["ctx_a"] + " " + d["ctx_b"].capitalize()),
+              [" " + _hs_pre(e) for e in d["endings"]], int(d["label"])) for d in ds]
+    return _eval_mc(model, tok, device, "hellaswag", items)
+
+@torch.no_grad()
+def eval_arc_easy(model, tok, device, n):
+    """zero-shot, test split. 3-5 choices per question. headline metric: acc."""
+    from datasets import load_dataset
+    ds = load_dataset("allenai/ai2_arc", "ARC-Easy", split="test")
+    if n > 0: ds = ds.select(range(min(n, len(ds))))
+    items = [("Question: " + d["question"] + "\nAnswer:", [" " + c for c in d["choices"]["text"]],
+              d["choices"]["label"].index(d["answerKey"])) for d in ds]
+    return _eval_mc(model, tok, device, "arc_easy", items)
+
 # ---------------- driver ----------------
 def run_eval(ckpt_path, device, args):
     t0 = time.time()
     model, opt_step = build_and_load(ckpt_path, device)
+    n_params = sum(p.numel() for p in model.parameters())                                   # 876,011,520 at current Config
+    n_mtp = sum(p.numel() for n, p in model.named_parameters() if n.startswith("mtp_heads_list"))
+    print(f"[model] params {n_params:,} total, {n_params - n_mtp:,} excl. MTP heads (what eval scores use)")
     metrics = {}
     metrics.update(eval_val_loss(model, device, args.val_file, args.val_seqs, cfg.SEQ_LEN))
     if args.mmlu_n > 0:
@@ -191,6 +270,10 @@ def run_eval(ckpt_path, device, args):
                                  subjects=args.mmlu_subjects, n_per_subject=args.mmlu_n))
     if args.gsm8k_n > 0:
         metrics.update(eval_gsm8k(model, tok=load_tokenizer(), device=device, n=args.gsm8k_n))
+    if args.hellaswag_n != 0:
+        metrics.update(eval_hellaswag(model, tok=load_tokenizer(), device=device, n=args.hellaswag_n))
+    if args.arc_n != 0:
+        metrics.update(eval_arc_easy(model, tok=load_tokenizer(), device=device, n=args.arc_n))
     metrics["eval/opt_step"] = opt_step
     metrics["eval/seconds"] = round(time.time() - t0, 1)
     del model; torch.cuda.empty_cache()
@@ -209,6 +292,8 @@ def main():
         "abstract_algebra", "high_school_mathematics", "college_computer_science",
         "elementary_mathematics", "world_religions", "high_school_physics"])
     ap.add_argument("--gsm8k_n", type=int, default=100, help="0 to skip")
+    ap.add_argument("--hellaswag_n", type=int, default=-1, help="-1 = full validation (10042), 0 to skip")
+    ap.add_argument("--arc_n", type=int, default=-1, help="ARC-Easy: -1 = full test (2376), 0 to skip")
     ap.add_argument("--poll_sec", type=int, default=300)
     ap.add_argument("--wandb", action="store_true", help="log to wandb (project eval-<RUN_NAME>)")
     args = ap.parse_args()
